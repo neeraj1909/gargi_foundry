@@ -349,3 +349,154 @@ class Run:
             attempt=data["attempt"],
             error_code=data.get("error_code"),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class Suggestion:
+    """A typed, source-grounded editorial suggestion.
+
+    Exact source grounding is checked later by guardrails.py because that
+    boundary needs access to the authoritative SourceSnapshot and Run.
+    """
+
+    suggestion_id: str
+    run_id: str
+    document_id: str
+    source_version: int
+    source_digest: str
+    start: int
+    end: int
+    quote: str
+    category: str
+    rationale: str
+    replacement: str | None = None
+
+    def __post_init__(self) -> None:
+        _require_identifier(self.suggestion_id, name="suggestion_id")
+        _require_identifier(self.run_id, name="run_id")
+        _require_identifier(self.document_id, name="document_id")
+
+        _require_positive_int(
+            self.source_version,
+            name="source_version",
+        )
+
+        if not isinstance(self.source_digest, str):
+            raise DomainError("source_digest must be a string")
+
+        if len(self.source_digest) != 64:
+            raise DomainError("source_digest must be a SHA-256 hex digest")
+
+        _require_non_negative_int(self.start, name="start")
+        _require_non_negative_int(self.end, name="end")
+
+        if self.start >= self.end:
+            raise DomainError("suggestion spans must be non-empty")
+
+        _require_text(
+            self.quote,
+            name="quote",
+            maximum=MAX_REPLACEMENT_LENGTH,
+        )
+        _require_text(
+            self.category,
+            name="category",
+            maximum=MAX_CATEGORY_LENGTH,
+        )
+        _require_text(
+            self.rationale,
+            name="rationale",
+            maximum=MAX_RATIONALE_LENGTH,
+        )
+
+        if self.replacement is not None:
+            _require_text(
+                self.replacement,
+                name="replacement",
+                maximum=MAX_REPLACEMENT_LENGTH,
+                allow_empty=True,
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "suggestion_id": self.suggestion_id,
+            "run_id": self.run_id,
+            "document_id": self.document_id,
+            "source_version": self.source_version,
+            "source_digest": self.source_digest,
+            "start": self.start,
+            "end": self.end,
+            "quote": self.quote,
+            "category": self.category,
+            "rationale": self.rationale,
+            "replacement": self.replacement,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> Suggestion:
+        return cls(
+            suggestion_id=data["suggestion_id"],
+            run_id=data["run_id"],
+            document_id=data["document_id"],
+            source_version=data["source_version"],
+            source_digest=data["source_digest"],
+            start=data["start"],
+            end=data["end"],
+            quote=data["quote"],
+            category=data["category"],
+            rationale=data["rationale"],
+            replacement=data.get("replacement"),
+        )
+        
+
+@dataclass(frozen=True, slots=True)
+class ReviewResult:
+    """The typed result of one review operation."""
+
+    run_id: str
+    suggestions: tuple[Suggestion, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        _require_identifier(self.run_id, name="run_id")
+
+        if not isinstance(self.suggestions, tuple):
+            object.__setattr__(
+                self,
+                "suggestions",
+                tuple(self.suggestions),
+            )
+
+        if any(
+            not isinstance(suggestion, Suggestion)
+            for suggestion in self.suggestions
+        ):
+            raise DomainError(
+                "suggestions must contain only Suggestion objects"
+            )
+
+    @property
+    def has_changes(self) -> bool:
+        return bool(self.suggestions)
+
+    @property
+    def is_no_change(self) -> bool:
+        return not self.has_changes
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "suggestions": [
+                suggestion.to_dict()
+                for suggestion in self.suggestions
+            ],
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> ReviewResult:
+        return cls(
+            run_id=data["run_id"],
+            suggestions=tuple(
+                Suggestion.from_dict(item)
+                for item in data.get("suggestions", [])
+            ),
+        )
