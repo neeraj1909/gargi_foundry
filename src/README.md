@@ -1,39 +1,41 @@
-# Writings Domain
+# Writings Runtime Boundary
 
 ## Overview
 
-The `writings` domain module defines the core data and state rules for the
-author-controlled review workflow.
+The `writings` package implements the first executable review-run boundary:
+admission, worker execution, retained events, and reconnect observation.
 
-## Purpose
+## Day 1 Flow
 
-`domain.py` keeps the review contract independent from databases, model
-providers, workers, and user interfaces. It preserves the identity of the
-source text and gives the rest of the application typed objects to pass
-between boundaries.
+```text
+ReviewRequest
+    → SQLiteRunStore.admit()
+    → AdmissionReceipt + Run + Notification
+    → Worker.claim_next()
+    → retained RunEvent records
+    → RunObserver.reconnect(run_id)
+```
 
-## Main Types
+The same request identity and payload are replayed idempotently. Reusing the
+identity for different work raises an admission conflict.
 
-- `SourceSnapshot` stores the exact source text, document version, and
-  SHA-256 digest.
-- `ReviewRequest` records the owner, review intent, source snapshot, and
-  idempotency key.
-- `Run` and `RunState` represent the review lifecycle and valid state changes.
-- `Suggestion` represents a possible source-grounded editorial suggestion.
-- `ReviewResult` represents one or more suggestions, including no-change
-  results.
-- `DecisionResult` records the author's explicit accept or dismiss decision.
+## Modules
+
+- `domain.py` contains immutable source, request, run, suggestion, result, and
+  decision types with local invariant checks.
+- `admission.py` defines deterministic request fingerprints, admission receipts,
+  and the application admission boundary.
+- `store.py` persists requests, runs, notifications, results, and retained
+  events in SQLite transactions.
+- `worker.py` claims admitted runs and owns the provider credential boundary.
+- `observation.py` reads an existing run and its retained events after a
+  reconnect without submitting a second request.
 
 ## Design Boundary
 
-The module contains pure domain objects and local invariant checks. It does
-not call providers, persist data, mutate source text, or render a UI.
+The implementation uses a provider protocol and does not call a real provider,
+HTTP service, or user interface. Provider recovery after an unknown external
+effect belongs to a later runtime-recovery slice.
 
-Source identity is based on the exact UTF-8 text. The text is not normalized,
-trimmed, or rewritten while the snapshot is created.
-
-## Next Boundary
-
-Publication-time checks such as exact quote/span matching, duplicate suggestion
-IDs, allowed categories, and author-ownership checks belong in the guardrail
-layer before a suggestion is published or accepted.
+Source identity remains based on exact UTF-8 text. The source is not
+normalized, trimmed, or rewritten while a snapshot is created.
