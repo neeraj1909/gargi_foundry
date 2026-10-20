@@ -500,3 +500,94 @@ class ReviewResult:
                 for item in data.get("suggestions", [])
             ),
         )
+
+
+class DecisionKind(str, Enum):
+    ACCEPT = "accept"
+    DISMISS = "dismiss"
+
+
+@dataclass(frozen=True, slots=True)
+class DecisionResult:
+    """The result of an explicit author decision."""
+
+    decision_id: str
+    run_id: str
+    suggestion_id: str
+    owner_id: str
+    document_id: str
+    source_version: int
+    source_digest: str
+    kind: DecisionKind
+    replacement: str | None
+    applied: bool
+    resulting_version: int
+
+    def __post_init__(self) -> None:
+        _require_identifier(self.decision_id, name="decision_id")
+        _require_identifier(self.run_id, name="run_id")
+        _require_identifier(self.suggestion_id, name="suggestion_id")
+        _require_identifier(self.owner_id, name="owner_id")
+        _require_identifier(self.document_id, name="document_id")
+
+        _require_positive_int(
+            self.source_version,
+            name="source_version",
+        )
+        _require_non_negative_int(
+            self.resulting_version,
+            name="resulting_version",
+        )
+
+        if self.resulting_version < self.source_version:
+            raise DomainError(
+                "resulting_version cannot be older than source_version"
+            )
+
+        if not isinstance(self.source_digest, str):
+            raise DomainError("source_digest must be a string")
+
+        if not isinstance(self.kind, DecisionKind):
+            raise DomainError("kind must be a DecisionKind")
+
+        if not isinstance(self.applied, bool):
+            raise DomainError("applied must be a boolean")
+
+        if self.replacement is not None:
+            _require_text(
+                self.replacement,
+                name="replacement",
+                maximum=MAX_REPLACEMENT_LENGTH,
+                allow_empty=True,
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "decision_id": self.decision_id,
+            "run_id": self.run_id,
+            "suggestion_id": self.suggestion_id,
+            "owner_id": self.owner_id,
+            "document_id": self.document_id,
+            "source_version": self.source_version,
+            "source_digest": self.source_digest,
+            "kind": self.kind.value,
+            "replacement": self.replacement,
+            "applied": self.applied,
+            "resulting_version": self.resulting_version,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> DecisionResult:
+        return cls(
+            decision_id=data["decision_id"],
+            run_id=data["run_id"],
+            suggestion_id=data["suggestion_id"],
+            owner_id=data["owner_id"],
+            document_id=data["document_id"],
+            source_version=data["source_version"],
+            source_digest=data["source_digest"],
+            kind=DecisionKind(data["kind"]),
+            replacement=data.get("replacement"),
+            applied=data["applied"],
+            resulting_version=data["resulting_version"],
+        )
