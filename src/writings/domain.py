@@ -61,7 +61,7 @@ def _require_text(
     return value
 
 
-def _require_identifier(value: str, * name: str) -> str:
+def _require_identifier(value: str, *, name: str) -> str:
     return _require_text(
         value,
         name=name,
@@ -69,8 +69,8 @@ def _require_identifier(value: str, * name: str) -> str:
     )
     
     
-def _require_positive_int(value: str, *, name: str)-> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+def _require_positive_int(value: int, *, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise DomainError(f"{name} must be a non-negative integer")
     
     return value 
@@ -88,7 +88,7 @@ class SourceSnapshot:
     """The exact source text used for one review."""
     
     document_id: str
-    version: str
+    version: int
     text: str
     digest: str
     
@@ -329,7 +329,7 @@ class Run:
     def with_attempt(self) -> Run:
         """Return a new run with its provider-attempt count incremented."""
         
-        return replace(self, self.attempt=self.attempt + 1)
+        return replace(self, attempt=self.attempt + 1)
     
     def to_dict(self) -> dict[str, Any]:
         return {
