@@ -244,3 +244,108 @@ _ALLOWED_TRANSITIONS: dict[RunState, frozenset[RunState]] = {
     RunState.UNKNOWN_EFFECT: frozenset(),
     RunState.REJECTED: frozenset(),
 }
+
+
+@dataclass(frozen=True, slots=True)
+class Run:
+    """Immutable in-memory representation of a review run."""
+    
+    run_id: str
+    request: ReviewRequest
+    state: RunState = RunState.ADMITTED
+    attempt: int = 0
+    error_code: str | None = None 
+    
+    def __post_init__(self) -> None:
+        _require_identifier(self.run_id, name="run_id")
+        _require_non_negative_int(self.attempt, name="attempt")
+
+        if not isinstance(self.state, RunState):
+            raise DomainError("state must be a RunState")
+
+        if self.error_code is not None:
+            _require_text(
+                self.error_code,
+                name="error_code",
+                maximum=MAX_ERROR_CODE_LENGTH,
+            )
+        
+    @property
+    def document_id(self) -> str:
+        return self.request.document_id 
+    
+    @property
+    def source_version(self) -> int:
+        return self.request.source_version
+    
+    @property
+    def source_digest(self) -> str:
+        return self.request.source_digest 
+    
+    @property
+    def is_terminal(self) -> bool:
+        return self.state in {
+            RunState.SUCCEEDED,
+            RunState.FAILED,
+            RunState.UNKNOWN_EFFECT,
+            RunState.REJECTED,
+        }
+        
+    def transition(
+        self,
+        next_state: RunState,
+        *,
+        error_code: str | None = None,
+    ) -> Run:
+        """Return a new run after a valid state transition."""
+        
+        if not isinstance(next_state, RunState):
+            raise DomainError("next_state must be a RunState")
+        
+        if next_state == self.state:
+            return self
+        
+        allowed = _ALLOWED_TRANSITIONS[self.state]
+        
+        if next_state not in allowed:
+            raise DomainError(
+                f"invalid run transition: "
+                f"{self.state.value} -> {next_state.value}"
+            )
+            
+        if error_code is not None:
+            _require_text(
+                error_code,
+                name="error_code",
+                maximum=MAX_ERROR_CODE_LENGTH,
+            )
+            
+        return replace(
+            self,
+            state=next_state,
+            error_code=error_code,
+        )
+        
+    def with_attempt(self) -> Run:
+        """Return a new run with its provider-attempt count incremented."""
+        
+        return replace(self, self.attempt=self.attempt + 1)
+    
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "request": self.request.to_dict(),
+            "state": self.state.value,
+            "attempt": self.attempt,
+            "error_code": self.error_code,
+        }
+        
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> Run:
+        return cls(
+            run_id=data["run_id"],
+            request=ReviewRequest.from_dict(data["request"]),
+            state=RunState(data["state"]),
+            attempt=data["attempt"],
+            error_code=data.get("error_code"),
+        )
