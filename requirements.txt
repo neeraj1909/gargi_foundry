@@ -1,0 +1,5 @@
+# Runtime dependencies: Python standard library only.
+
+# Development and validation tools
+pytest>=8,<9
+ruff>=0.8,<1
