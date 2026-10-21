@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 import sys
 from pathlib import Path
@@ -11,20 +12,15 @@ SOURCE_ROOT = Path(__file__).resolve().parents[1] / "src"
 if str(SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(SOURCE_ROOT))
 
-from writings.contracts import (
-    MAX_UINT64,
-    ContractError,
-    OptionalRevision,
-    ReviewRequestContract,
-    TextTarget,
-)
+contracts = importlib.import_module("writings.contracts")
 
+MAX_UINT64 = contracts.MAX_UINT64
+ContractError = contracts.ContractError
+OptionalRevision = contracts.OptionalRevision
+ReviewRequestContract = contracts.ReviewRequestContract
+TextTarget = contracts.TextTarget
 
-FIXTURE_PATH = (
-    Path(__file__).parent
-    / "fixtures"
-    / "day2_revision_presence.json"
-)
+FIXTURE_PATH = Path(__file__).parent / "fixtures" / "revision_presence.json"
 
 
 def make_request(
@@ -65,9 +61,7 @@ def test_maximum_uint64_revision_is_supported() -> None:
     revision = OptionalRevision.supplied(MAX_UINT64)
 
     assert revision.value == MAX_UINT64
-    assert revision.to_wire_dict() == {
-        "expectedRevision": "18446744073709551615"
-    }
+    assert revision.to_wire_dict() == {"expectedRevision": "18446744073709551615"}
 
 
 @pytest.mark.parametrize(
@@ -92,9 +86,7 @@ def test_absent_and_explicit_zero_are_not_equal() -> None:
 def test_request_uses_canonical_protobuf_json_field_names() -> None:
     request = make_request(OptionalRevision.supplied(42))
 
-    payload = request.to_wire_dict()
-
-    assert payload == {
+    assert request.to_wire_dict() == {
         "requestId": "request-1",
         "ownerId": "owner-1",
         "target": {
@@ -109,9 +101,7 @@ def test_request_uses_canonical_protobuf_json_field_names() -> None:
 def test_omitted_revision_is_not_added_during_round_trip() -> None:
     request = make_request()
 
-    restored = ReviewRequestContract.from_wire_dict(
-        request.to_wire_dict()
-    )
+    restored = ReviewRequestContract.from_wire_dict(request.to_wire_dict())
 
     assert restored == request
     assert "expectedRevision" not in restored.target.to_wire_dict()
@@ -187,20 +177,12 @@ def test_invalid_json_is_rejected() -> None:
 def test_revision_presence_fixtures_preserve_meaning() -> None:
     fixtures = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
 
-    omitted = ReviewRequestContract.from_wire_dict(
-        fixtures["omitted_revision"]
-    )
+    omitted = ReviewRequestContract.from_wire_dict(fixtures["omitted_revision"])
     explicit_zero = ReviewRequestContract.from_wire_dict(
         fixtures["explicit_zero_revision"]
     )
-    maximum = ReviewRequestContract.from_wire_dict(
-        fixtures["maximum_revision"]
-    )
+    maximum = ReviewRequestContract.from_wire_dict(fixtures["maximum_revision"])
 
     assert omitted.target.expected_revision == OptionalRevision.absent()
-    assert explicit_zero.target.expected_revision == OptionalRevision.supplied(
-        0
-    )
-    assert maximum.target.expected_revision == OptionalRevision.supplied(
-        MAX_UINT64
-    )
+    assert explicit_zero.target.expected_revision == OptionalRevision.supplied(0)
+    assert maximum.target.expected_revision == OptionalRevision.supplied(MAX_UINT64)
