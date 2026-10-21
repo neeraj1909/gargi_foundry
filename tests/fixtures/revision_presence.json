@@ -1,0 +1,31 @@
+{
+  "omitted_revision": {
+    "requestId": "request-1",
+    "ownerId": "owner-1",
+    "target": {
+      "documentId": "document-1"
+    },
+    "intent": "Review this text for clarity.",
+    "idempotencyKey": "idempotency-1"
+  },
+  "explicit_zero_revision": {
+    "requestId": "request-1",
+    "ownerId": "owner-1",
+    "target": {
+      "documentId": "document-1",
+      "expectedRevision": "0"
+    },
+    "intent": "Review this text for clarity.",
+    "idempotencyKey": "idempotency-1"
+  },
+  "maximum_revision": {
+    "requestId": "request-1",
+    "ownerId": "owner-1",
+    "target": {
+      "documentId": "document-1",
+      "expectedRevision": "18446744073709551615"
+    },
+    "intent": "Review this text for clarity.",
+    "idempotencyKey": "idempotency-1"
+  }
+}
