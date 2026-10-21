@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package writings.v1;
+
+message TextTarget {
+  string document_id = 1;
+
+  // Presence matters:
+  // absent  -> operate on the current draft
+  // supplied -> bind the request to a saved revision
+  optional uint64 expected_revision = 2;
+}
+
+message ReviewRequest {
+  string request_id = 1;
+  string owner_id = 2;
+  TextTarget target = 3;
+  string intent = 4;
+  string idempotency_key = 5;
+}
