@@ -11,15 +11,15 @@ SOURCE_ROOT = Path(__file__).resolve().parents[1] / "src"
 
 if str(SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(SOURCE_ROOT))
-    
+
 domain = importlib.import_module("writings.domain")
 review_base = importlib.import_module("writings.review_base")
 store_module = importlib.import_module("writings.store")
 
-DomainError = domain.DomainError 
+DomainError = domain.DomainError
 ReviewRequest = domain.ReviewRequest
-Run = domain.Run 
-SourceSnapshot = domain.SourceSnapshot 
+Run = domain.Run
+SourceSnapshot = domain.SourceSnapshot
 
 FrozenReviewBase = review_base.FrozenReviewBase
 ReviewBaseReader = review_base.ReviewBaseReader
@@ -36,8 +36,8 @@ def make_snapshot(
         version=version,
         text=text,
     )
-    
-   
+
+
 def make_request(
     snapshot: SourceSnapshot | None = None,
 ) -> ReviewRequest:
@@ -66,7 +66,7 @@ def test_review_base_is_created_from_the_admitted_run() -> None:
     assert review_base.digest == snapshot.digest
     assert review_base.source == snapshot
 
-    
+
 def test_review_base_is_immutable() -> None:
     review_base = FrozenReviewBase.from_run(
         Run(
@@ -152,8 +152,8 @@ def test_review_base_round_trips_through_dictionaries() -> None:
 
     assert restored == review_base
     assert restored.source == original
-    
-    
+
+
 def test_review_base_rejects_invalid_run_id() -> None:
     with pytest.raises(DomainError, match="run_id"):
         FrozenReviewBase(
