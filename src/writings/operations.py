@@ -408,3 +408,185 @@ class OwnedDocument:
                 "snapshot_invalid",
                 "snapshot must be a SourceSnapshot",
             )
+
+
+class SQLiteOperationStore:
+    """SQLite boundary for atomic, idempotent text operations."""
+
+    def __init__(
+        self,
+        database: str | Path = ":memory:",
+    ) -> None:
+        self._connection = sqlite3.connect(
+            str(database),
+            timeout=5.0,
+            isolation_level=None,
+            check_same_thread=False,
+        )
+        self._connection.row_factory = sqlite3.Row
+        self._lock = RLock()
+        self._initialize_schema()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        self.close()
+
+    def close(self) -> None:
+        with self._lock:
+            self._connection.close()
+
+    def _initialize_schema(self) -> None:
+        with self._lock:
+            self._connection.execute("PRAGMA foreign_keys = ON")
+            self._connection.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS documents (
+                    document_id TEXT PRIMARY KEY,
+                    owner_id TEXT NOT NULL,
+                    version INTEGER NOT NULL,
+                    text TEXT NOT NULL,
+                    digest TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS operation_events (
+                    document_id TEXT NOT NULL,
+                    sequence INTEGER NOT NULL,
+                    event_type TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    PRIMARY KEY(document_id, sequence),
+                    FOREIGN KEY(document_id) REFERENCES documents(document_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS operation_receipts (
+                    operation_id TEXT PRIMARY KEY,
+                    document_id TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    payload_digest TEXT NOT NULL,
+                    receipt_json TEXT NOT NULL,
+                    FOREIGN KEY(document_id) REFERENCES documents(document_id)
+                );
+                """
+            )
+
+    @contextmanager
+    def _transaction(self) -> Iterator[None]:
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+
+            try:
+                yield
+            except BaseException:
+                self._connection.rollback()
+                raise
+            else:
+                self._connection.commit()
+
+    def register_document(
+        self,
+        *,
+        owner_id: str,
+        snapshot: SourceSnapshot,
+    ) -> None:
+        """Register one owned source snapshot as the current document."""
+
+        _require_identifier(owner_id, name="owner_id")
+
+        if not isinstance(snapshot, SourceSnapshot):
+            raise TypeError("snapshot must be a SourceSnapshot")
+
+        with self._transaction():
+            row = self._connection.execute(
+                """
+                SELECT document_id, owner_id, version, text, digest
+                FROM documents
+                WHERE document_id = ?
+                """,
+                (snapshot.document_id,),
+            ).fetchone()
+
+            if row is not None:
+                existing = self._row_to_document(row)
+
+                if existing.owner_id != owner_id or existing.snapshot != snapshot:
+                    raise OperationConflict(
+                        "document_identity_reused",
+                        "document identity was registered with different data",
+                    )
+
+                return
+
+            self._connection.execute(
+                """
+                INSERT INTO documents (
+                    document_id,
+                    owner_id,
+                    version,
+                    text,
+                    digest
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    snapshot.document_id,
+                    owner_id,
+                    snapshot.version,
+                    snapshot.text,
+                    snapshot.digest,
+                ),
+            )
+
+    def get_document(self, document_id: str) -> OwnedDocument:
+        _require_identifier(document_id, name="document_id")
+
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT document_id, owner_id, version, text, digest
+                FROM documents
+                WHERE document_id = ?
+                """,
+                (document_id,),
+            ).fetchone()
+
+        if row is None:
+            raise DocumentNotFound(document_id)
+
+        return self._row_to_document(row)
+
+    def events(
+        self,
+        document_id: str,
+        *,
+        after_sequence: int = 0,
+    ) -> tuple[OperationEvent, ...]:
+        _require_identifier(document_id, name="document_id")
+        _require_non_negative_int(after_sequence, name="after_sequence")
+
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT document_id, sequence, event_type, payload_json
+                FROM operation_events
+                WHERE document_id = ?
+                  AND sequence > ?
+                ORDER BY sequence ASC
+                """,
+                (document_id, after_sequence),
+            ).fetchall()
+
+        return tuple(
+            OperationEvent(
+                document_id=row["document_id"],
+                sequence=int(row["sequence"]),
+                event_type=row["event_type"],
+                payload=_json_object(row["payload_json"]),
+            )
+            for row in rows
+        )
