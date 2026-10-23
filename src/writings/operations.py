@@ -775,3 +775,61 @@ class SQLiteOperationStore:
             )
 
             return receipt
+
+    def _reject_overlapping_operation(
+        self,
+        operation: RewriteOperation,
+    ) -> None:
+        rows = self._connection.execute(
+            """
+            SELECT payload_json
+            FROM operation_events
+            WHERE document_id = ?
+              AND event_type = ?
+            """,
+            (
+                operation.document_id,
+                "rewrite.applied",
+            ),
+        ).fetchall()
+
+        for row in rows:
+            payload = _json_object(row["payload_json"])
+
+            if payload["expected_version"] != operation.expected_version:
+                continue
+
+            if _spans_overlap(
+                int(payload["start"]),
+                int(payload["end"]),
+                operation.start,
+                operation.end,
+            ):
+                raise OperationRejected(
+                    "overlapping_operation",
+                    "another operation already changed an overlapping span",
+                )
+
+    def _next_event_sequence(self, document_id: str) -> int:
+        row = self._connection.execute(
+            """
+            SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence
+            FROM operation_events
+            WHERE document_id = ?
+            """,
+            (document_id,),
+        ).fetchone()
+
+        return int(row["next_sequence"])
+
+    @staticmethod
+    def _row_to_document(row: sqlite3.Row) -> OwnedDocument:
+        return OwnedDocument(
+            owner_id=row["owner_id"],
+            snapshot=SourceSnapshot(
+                document_id=row["document_id"],
+                version=int(row["version"]),
+                text=row["text"],
+                digest=row["digest"],
+            ),
+        )
