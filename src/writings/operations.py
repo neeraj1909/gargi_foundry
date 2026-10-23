@@ -590,3 +590,188 @@ class SQLiteOperationStore:
             )
             for row in rows
         )
+
+    def apply(self, operation: RewriteOperation) -> OperationReceipt:
+        """Validate and atomically apply one bounded rewrite."""
+
+        if not isinstance(operation, RewriteOperation):
+            raise TypeError("operation must be a RewriteOperation")
+
+        payload_json = _canonical_json(operation.to_dict())
+        payload_digest = operation_payload_digest(operation)
+
+        with self._transaction():
+            existing = self._connection.execute(
+                """
+                SELECT payload_json, payload_digest, receipt_json
+                FROM operation_receipts
+                WHERE operation_id = ?
+                """,
+                (operation.operation_id,),
+            ).fetchone()
+
+            if existing is not None:
+                if (
+                    existing["payload_json"] != payload_json
+                    or existing["payload_digest"] != payload_digest
+                ):
+                    raise OperationConflict(
+                        "operation_id_reused",
+                        "operation UUID was reused with a different payload",
+                    )
+
+                receipt = OperationReceipt.from_dict(
+                    _json_object(existing["receipt_json"])
+                )
+                return replace(receipt, replayed=True)
+
+            row = self._connection.execute(
+                """
+                SELECT document_id, owner_id, version, text, digest
+                FROM documents
+                WHERE document_id = ?
+                """,
+                (operation.document_id,),
+            ).fetchone()
+
+            if row is None:
+                raise OperationRejected(
+                    "target_not_found",
+                    "the target document does not exist",
+                )
+
+            current = self._row_to_document(row)
+
+            if current.owner_id != operation.owner_id:
+                raise OperationRejected(
+                    "wrong_owner",
+                    "the operation owner does not own the target document",
+                )
+
+            self._reject_overlapping_operation(operation)
+
+            if current.snapshot.version != operation.expected_version:
+                raise OperationRejected(
+                    "stale_revision",
+                    "the target revision is no longer current",
+                )
+
+            if current.snapshot.digest != operation.expected_digest:
+                raise OperationRejected(
+                    "stale_digest",
+                    "the target digest is no longer current",
+                )
+
+            try:
+                actual_quote = current.snapshot.text_span(
+                    operation.start,
+                    operation.end,
+                )
+            except DomainError as exc:
+                raise OperationRejected(
+                    "invalid_span",
+                    str(exc),
+                ) from exc
+
+            if actual_quote != operation.quote:
+                raise OperationRejected(
+                    "changed_quote",
+                    "the current target text differs from the captured quote",
+                )
+
+            if operation.replacement == operation.quote:
+                raise OperationRejected(
+                    "no_change",
+                    "the replacement would not change the document",
+                )
+
+            updated_snapshot = SourceSnapshot.create(
+                document_id=current.snapshot.document_id,
+                version=current.snapshot.version + 1,
+                text=(
+                    current.snapshot.text[: operation.start]
+                    + operation.replacement
+                    + current.snapshot.text[operation.end :]
+                ),
+            )
+
+            event_sequence = self._next_event_sequence(
+                operation.document_id,
+            )
+
+            self._connection.execute(
+                """
+                UPDATE documents
+                SET version = ?, text = ?, digest = ?
+                WHERE document_id = ?
+                """,
+                (
+                    updated_snapshot.version,
+                    updated_snapshot.text,
+                    updated_snapshot.digest,
+                    updated_snapshot.document_id,
+                ),
+            )
+
+            event_payload = {
+                "operation_id": operation.operation_id,
+                "owner_id": operation.owner_id,
+                "expected_version": operation.expected_version,
+                "resulting_version": updated_snapshot.version,
+                "start": operation.start,
+                "end": operation.end,
+                "payload_digest": payload_digest,
+            }
+
+            self._connection.execute(
+                """
+                INSERT INTO operation_events (
+                    document_id,
+                    sequence,
+                    event_type,
+                    payload_json
+                )
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    operation.document_id,
+                    event_sequence,
+                    "rewrite.applied",
+                    _canonical_json(event_payload),
+                ),
+            )
+
+            receipt = OperationReceipt(
+                operation_id=operation.operation_id,
+                owner_id=operation.owner_id,
+                document_id=operation.document_id,
+                source_version=operation.expected_version,
+                resulting_version=updated_snapshot.version,
+                source_digest=operation.expected_digest,
+                resulting_digest=updated_snapshot.digest,
+                payload_digest=payload_digest,
+                event_sequence=event_sequence,
+                applied=True,
+            )
+
+            self._connection.execute(
+                """
+                INSERT INTO operation_receipts (
+                    operation_id,
+                    document_id,
+                    payload_json,
+                    payload_digest,
+                    receipt_json
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    operation.operation_id,
+                    operation.document_id,
+                    payload_json,
+                    payload_digest,
+                    _canonical_json(receipt.to_persisted_dict()),
+                ),
+            )
+
+            return receipt
