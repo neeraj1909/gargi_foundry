@@ -10,7 +10,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import RLock
 from types import TracebackType
-from typing import Any, Self 
+from typing import Any, Self
 
 from .domain import DomainError, SourceSnapshot, Suggestion
 
@@ -32,31 +32,32 @@ MAX_OPERATION_REPLACEMENT_LENGTH = 20_000
 MAX_IDENTIFIER_LENGTH = 256
 DIGEST_LENGTH = 64
 
+
 class OperationError(DomainError):
     """Base error for bounded text operations."""
-    
+
     def __init__(self, code: str, message: str) -> None:
         self.code = code
         self.message = message
         super().__init__(f"{code}: {message}")
-        
-        
+
+
 class OperationRejected(OperationError):
     """Raised when an operation fails an acceptance predicate."""
-    
-    
+
+
 class OperationConflict(OperationError):
     """Raised when an operation identity is reused with new payload."""
-    
-    
+
+
 class DocumentNotFound(LookupError):
     """Raised when a requested document does not exist."""
 
     def __init__(self, document_id: str) -> None:
         self.document_id = document_id
         super().__init__(f"document not found: {document_id}")
-        
-        
+
+
 def _require_identifier(value: Any, *, name: str) -> str:
     if not isinstance(value, str):
         raise OperationError(f"{name}_type", f"{name} must be a string")
